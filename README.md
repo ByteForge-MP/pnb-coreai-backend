@@ -14,7 +14,6 @@ git remote set-url origin https://token@github.com/ByteForge-MP/pnb-coreai-backe
 
 ---------Model-------------
 
-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
 pip install transformers huggingface_hub torch accelerate
 pip install hf_transfer
 python app/download_model.py
