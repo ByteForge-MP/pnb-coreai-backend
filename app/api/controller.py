@@ -18,6 +18,6 @@ async def stream_chat(request: Request):
 
     # Call your streaming service
     return StreamingResponse(
-        chat_service.get_streaming_response(chat_request.prompt, chat_request.model),
+        chat_service.get_streaming_response(request.app, chat_request.prompt, chat_request.model, chat_request.time),
         media_type="text/event-stream"
     )
