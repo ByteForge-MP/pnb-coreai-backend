@@ -27,4 +27,21 @@ python app/download_model.py
 
 --------Git--------------------
 killall git
+rm .git/index.lock   
 
+brew install git-lfs
+git lfs install
+git lfs track "*.safetensors"
+git lfs track "*.bin"
+git add .gitattributes
+git add app/models/smollm2-1.7b-local/
+git commit -m "Add SmolLM2 local weights via LFS"
+git push origin main
+
+# One step back to uncommit
+git reset --soft HEAD~1
+
+For fetching:
+git clone https://github.com/your-username/pnb-coreai-backend.git
+cd pnb-coreai-backend
+git lfs pull
