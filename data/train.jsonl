@@ -1,0 +1,45 @@
+{"messages":[{"role":"user","content":"What is AGM in PNB?"},{"role":"assistant","content":"AGM stands for Assistant General Manager, a senior management position in the bank."}]}
+{"messages":[{"role":"user","content":"Full form of DGM?"},{"role":"assistant","content":"DGM means Deputy General Manager, a high-level managerial role in the organization."}]}
+{"messages":[{"role":"user","content":"What does GM stand for in banking?"},{"role":"assistant","content":"GM stands for General Manager, responsible for overseeing major operations in the bank."}]}
+{"messages":[{"role":"user","content":"What is CBS in banking?"},{"role":"assistant","content":"CBS stands for Core Banking System, which allows customers to access banking services from any branch."}]}
+{"messages":[{"role":"user","content":"Full form of KYC?"},{"role":"assistant","content":"KYC means Know Your Customer, a regulatory process used to verify customer identity."}]}
+{"messages":[{"role":"user","content":"What is AML?"},{"role":"assistant","content":"AML stands for Anti-Money Laundering, regulations designed to prevent illegal financial activities."}]}
+{"messages":[{"role":"user","content":"What does RTGS stand for?"},{"role":"assistant","content":"RTGS means Real Time Gross Settlement, a system for instant high-value fund transfers."}]}
+{"messages":[{"role":"user","content":"Full form of NEFT?"},{"role":"assistant","content":"NEFT stands for National Electronic Funds Transfer, a system for transferring funds between banks electronically."}]}
+{"messages":[{"role":"user","content":"What is IMPS?"},{"role":"assistant","content":"IMPS means Immediate Payment Service, a real-time interbank electronic funds transfer system."}]}
+{"messages":[{"role":"user","content":"What is UPI?"},{"role":"assistant","content":"UPI stands for Unified Payments Interface, a mobile-based instant payment system."}]}
+{"messages":[{"role":"user","content":"Full form of NPA?"},{"role":"assistant","content":"NPA means Non-Performing Asset, a loan or advance where interest or principal is overdue."}]}
+{"messages":[{"role":"user","content":"What does CASA stand for?"},{"role":"assistant","content":"CASA stands for Current Account Savings Account deposits, indicating low-cost funds for banks."}]}
+{"messages":[{"role":"user","content":"What is CRR?"},{"role":"assistant","content":"CRR means Cash Reserve Ratio, the percentage of deposits banks must keep with the central bank."}]}
+{"messages":[{"role":"user","content":"Full form of SLR?"},{"role":"assistant","content":"SLR stands for Statutory Liquidity Ratio, the minimum reserve banks must maintain in liquid assets."}]}
+{"messages":[{"role":"user","content":"What does RBI stand for?"},{"role":"assistant","content":"RBI stands for Reserve Bank of India, the central banking authority of India."}]}
+{"messages":[{"role":"user","content":"Full form of NPCI?"},{"role":"assistant","content":"NPCI means National Payments Corporation of India, which operates retail payment systems in India."}]}
+{"messages":[{"role":"user","content":"What is IFSC?"},{"role":"assistant","content":"IFSC stands for Indian Financial System Code, used to identify bank branches for electronic payments."}]}
+{"messages":[{"role":"user","content":"What is MICR?"},{"role":"assistant","content":"MICR means Magnetic Ink Character Recognition, used for processing cheques."}]}
+{"messages":[{"role":"user","content":"Full form of OTP?"},{"role":"assistant","content":"OTP stands for One Time Password, a security code used for authentication."}]}
+{"messages":[{"role":"user","content":"What is ATM?"},{"role":"assistant","content":"ATM means Automated Teller Machine, used for cash withdrawal and banking transactions."}]}
+{"messages":[{"role":"user","content":"Full form of POS?"},{"role":"assistant","content":"POS stands for Point of Sale, a system used for processing card payments."}]}
+{"messages":[{"role":"user","content":"What does ECS stand for?"},{"role":"assistant","content":"ECS means Electronic Clearing Service, used for bulk electronic fund transfers."}]}
+{"messages":[{"role":"user","content":"What is FD?"},{"role":"assistant","content":"FD stands for Fixed Deposit, a savings instrument with a fixed interest rate and maturity period."}]}
+{"messages":[{"role":"user","content":"Full form of RD?"},{"role":"assistant","content":"RD means Recurring Deposit, a scheme where customers deposit money regularly for a fixed period."}]}
+{"messages":[{"role":"user","content":"What is ROI in banking?"},{"role":"assistant","content":"ROI stands for Rate of Interest, the percentage charged or earned on financial transactions."}]}
+{"messages":[{"role":"user","content":"Full form of EMI?"},{"role":"assistant","content":"EMI means Equated Monthly Installment, the fixed monthly payment for a loan."}]}
+{"messages":[{"role":"user","content":"What does LTV stand for?"},{"role":"assistant","content":"LTV means Loan to Value ratio, which indicates the loan amount compared to asset value."}]}
+{"messages":[{"role":"user","content":"What is CIBIL?"},{"role":"assistant","content":"CIBIL stands for Credit Information Bureau India Limited, which maintains credit scores of borrowers."}]}
+{"messages":[{"role":"user","content":"Full form of PAN?"},{"role":"assistant","content":"PAN means Permanent Account Number, a tax identification number issued in India."}]}
+{"messages":[{"role":"user","content":"What does GST stand for?"},{"role":"assistant","content":"GST stands for Goods and Services Tax, an indirect tax applied to goods and services."}]}
+{"messages":[{"role":"user","content":"What is HRMS?"},{"role":"assistant","content":"HRMS stands for Human Resource Management System, used for managing employee records."}]}
+{"messages":[{"role":"user","content":"Full form of MIS?"},{"role":"assistant","content":"MIS means Management Information System, used for reporting and decision-making."}]}
+{"messages":[{"role":"user","content":"What does API stand for?"},{"role":"assistant","content":"API means Application Programming Interface, allowing systems to communicate with each other."}]}
+{"messages":[{"role":"user","content":"What is DBT?"},{"role":"assistant","content":"DBT stands for Direct Benefit Transfer, a system for transferring subsidies directly to beneficiaries."}]}
+{"messages":[{"role":"user","content":"Full form of PMJDY?"},{"role":"assistant","content":"PMJDY means Pradhan Mantri Jan Dhan Yojana, a financial inclusion scheme in India."}]}
+{"messages":[{"role":"user","content":"What does UIDAI stand for?"},{"role":"assistant","content":"UIDAI stands for Unique Identification Authority of India, which issues Aadhaar numbers."}]}
+{"messages":[{"role":"user","content":"What is Aadhaar?"},{"role":"assistant","content":"Aadhaar is a 12-digit unique identity number issued by the Government of India."}]}
+{"messages":[{"role":"user","content":"Full form of IT?"},{"role":"assistant","content":"IT stands for Information Technology, related to computing systems and digital infrastructure."}]}
+{"messages":[{"role":"user","content":"What does VPN stand for?"},{"role":"assistant","content":"VPN means Virtual Private Network, used for secure remote access to networks."}]}
+{"messages":[{"role":"user","content":"What is LAN?"},{"role":"assistant","content":"LAN stands for Local Area Network, connecting computers within a limited area."}]}
+{"messages":[{"role":"user","content":"Full form of WAN?"},{"role":"assistant","content":"WAN means Wide Area Network, connecting systems across large geographical distances."}]}
+{"messages":[{"role":"user","content":"What is CPU?"},{"role":"assistant","content":"CPU stands for Central Processing Unit, the main processing component of a computer."}]}
+{"messages":[{"role":"user","content":"Full form of RAM?"},{"role":"assistant","content":"RAM means Random Access Memory, used for temporary data storage in computers."}]}
+{"messages":[{"role":"user","content":"What does SSD stand for?"},{"role":"assistant","content":"SSD means Solid State Drive, a high-speed storage device."}]}
+{"messages":[{"role":"user","content":"What is OS?"},{"role":"assistant","content":"OS stands for Operating System, software that manages computer hardware and applications."}]}

@@ -1,10 +1,12 @@
 import os
+import re
 import faiss
 import pickle
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from pathlib import Path
 
-DATA_FOLDER = "rag_data"
+DATA_FOLDER = "rag_data/positions"
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -14,25 +16,50 @@ def load_txt_files():
     texts = []
     sources = []
 
-    for file in os.listdir(DATA_FOLDER):
-        if file.endswith(".txt"):
-            path = os.path.join(DATA_FOLDER, file)
-            content = open(path, "r", encoding="utf-8").read()
-            texts.append(content)
-            sources.append(file)
+    for path in Path(DATA_FOLDER).rglob("*.txt"):
+        content = path.read_text(encoding="utf-8")
+        texts.append(content)
+        sources.append(str(path))   # keep full path for debugging
 
     return texts, sources
 
 
-# ---------- STEP 2: Chunk text ----------
-def chunk_text(text, size=200):
-    words = text.split()
+# ---------- STEP 2: Chunk by TOPIC + SECTION ----------
+def chunk_text(text, source):
+
+    # Extract topic
+    topic_match = re.search(r"TOPIC:\s*(.*)", text)
+    topic = topic_match.group(1).strip() if topic_match else "Unknown"
+
+    # Split by SECTION
+    parts = re.split(r"SECTION:\s*(.*)", text)
+
     chunks = []
+    metadata = []
 
-    for i in range(0, len(words), size):
-        chunks.append(" ".join(words[i:i+size]))
+    for i in range(1, len(parts), 2):
+        section = parts[i].strip()
+        content = parts[i+1].strip()
 
-    return chunks
+        if len(content) < 10:
+            continue
+
+        chunk = f"""
+TOPIC: {topic}
+SECTION: {section}
+
+{content}
+""".strip()
+
+        chunks.append(chunk)
+
+        metadata.append({
+            "source": source,
+            "topic": topic,
+            "section": section
+        })
+
+    return chunks, metadata
 
 
 # ---------- STEP 3: Prepare dataset ----------
@@ -44,27 +71,32 @@ def build_dataset():
     metadata = []
 
     for text, source in zip(raw_texts, sources):
-        chunks = chunk_text(text)
 
-        for chunk in chunks:
-            all_chunks.append(chunk)
-            metadata.append(source)
+        chunks, meta = chunk_text(text, source)
+
+        all_chunks.extend(chunks)
+        metadata.extend(meta)
 
     return all_chunks, metadata
 
 
 # ---------- STEP 4: Convert to embeddings ----------
 def create_embeddings(chunks):
-    return model.encode(chunks)
+    return model.encode(chunks, convert_to_numpy=True)
 
 
 # ---------- STEP 5: Build FAISS index ----------
 def build_index(embeddings):
 
-    dim = len(embeddings[0])
-    index = faiss.IndexFlatL2(dim)
+    dim = embeddings.shape[1]
 
-    index.add(np.array(embeddings))
+    # cosine similarity index (better than L2 for text)
+    index = faiss.IndexFlatIP(dim)
+
+    # normalize vectors for cosine search
+    faiss.normalize_L2(embeddings)
+
+    index.add(embeddings)
 
     return index
 

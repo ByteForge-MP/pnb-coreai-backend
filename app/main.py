@@ -17,6 +17,7 @@ if not os.path.exists(model_path):
     print(f"Path error! Could not find model at: {model_path}")
 
 print(f"Loading from: {model_path}")
+print("mps available:", torch.backends.mps.is_available())
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,7 +29,7 @@ async def lifespan(app: FastAPI):
         app.state.tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
         app.state.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.float16,  # Crucial for M2 performance
+            torch_dtype=torch.bfloat16,  # Crucial for M2 performance
             low_cpu_mem_usage=True,
             local_files_only=True
         ).to(device)
