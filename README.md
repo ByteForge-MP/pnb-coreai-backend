@@ -1,15 +1,14 @@
 
-pip install -r requirements.txt
-pip install --upgrade pip
-pip list
+pip install -r requirements.txt <br>
+pip install --upgrade pip <br>
+pip list <br>
 
-python3 -m venv venv
-source venv/bin/activate
-uvicorn app.main:app --reload
+python3 -m venv venv <br>
+source venv/bin/activate <br>
+uvicorn app.main:app --reload <br>
 
-git remote set-url origin https://user_name@github.com/ByteForge-MP/pnb-coreai-backend.git
-
-git remote set-url origin https://token@github.com/ByteForge-MP/pnb-coreai-backend.git
+git remote set-url origin https://user_name@github.com/ByteForge-MP/pnb-coreai-backend.git <br>
+git remote set-url origin https://token@github.com/ByteForge-MP/pnb-coreai-backend.git <br>
 
 
 ---------Model-------------
