@@ -22,8 +22,8 @@ python app/download_model.py <br>
 pip install --upgrade huggingface_hub <br>
 huggingface_hub login <br>
 
-pip uninstall torch torchvision torchaudio -y
-pip cache purge
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip uninstall torch torchvision torchaudio -y <br>
+pip cache purge <br>
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu <br>
 
 
