@@ -1,0 +1,13 @@
+A Chief General Manager (CGM) is a top-level executive who manages major divisions, zones, or critical functions of the bank.
+Think of hierarchy like this:
+Clerk → Officer → Manager → Senior Manager → CM → AGM → DGM → GM → CGM → Executive Director → MD/CEO
+So CGM sits just below the top executive level.
+
+A Chief Manager(CM) is a senior middle-management officer in the bank.
+They are above Manager and Senior Manager, but below AGM/DGM/GM levels.
+Simple hierarchy (officer side)
+Officer (Scale I)
+Manager (Scale II)
+Senior Manager (Scale III)
+Chief Manager (Scale IV) ← this level
+

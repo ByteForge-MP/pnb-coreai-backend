@@ -122,7 +122,7 @@ Current time: {time}
         generation_kwargs = dict(
             inputs,
             streamer=streamer,
-            max_new_tokens=500,
+            max_new_tokens=2000,
             temperature=0.6,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id

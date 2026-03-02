@@ -45,3 +45,12 @@ For fetching:
 git clone https://github.com/your-username/pnb-coreai-backend.git
 cd pnb-coreai-backend
 git lfs pull
+
+
+-----------------
+
+pip uninstall torch torchvision torchaudio -y
+pip cache purge
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+-----------------
