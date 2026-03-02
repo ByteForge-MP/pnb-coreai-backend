@@ -12,10 +12,8 @@ python app/download_model.py <br>
 
 git remote set-url origin https://user_name@github.com/ByteForge-MP/pnb-coreai-backend.git <br>
 git remote set-url origin https://token@github.com/ByteForge-MP/pnb-coreai-backend.git <br>
-&nbsp
 #### One step back to uncommit <br>
 git reset --soft HEAD~1 <br>
-&nbsp
 git clone https://github.com/your-username/pnb-coreai-backend.git <br>
 
 pip install transformers huggingface_hub torch accelerate <br>
