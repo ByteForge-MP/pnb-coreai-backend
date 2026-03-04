@@ -26,4 +26,15 @@ pip uninstall torch torchvision torchaudio -y <br>
 pip cache purge <br>
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu <br>
 
+#### ollama <br>
+brew install ollama <br>
+ollama serve <br>
+ollama pull mistral <br>
+ollama run mistral <br>
+Ollama automatically runs a local API: <br>
+http://localhost:11434 <br>
+
+#### vllm <br>
+
+
 
