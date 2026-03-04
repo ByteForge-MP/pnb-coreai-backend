@@ -1,124 +1,79 @@
 import os
-import re
 import faiss
 import pickle
-import numpy as np
 from sentence_transformers import SentenceTransformer
-from pathlib import Path
+import numpy as np
 
-DATA_FOLDER = "rag_data/positions"
-
+# embedding model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
+KB_FOLDER = "rag_data"
 
-# ---------- STEP 1: Load all txt files ----------
-def load_txt_files():
-    texts = []
-    sources = []
+documents = []
 
-    for path in Path(DATA_FOLDER).rglob("*.txt"):
-        content = path.read_text(encoding="utf-8")
-        texts.append(content)
-        sources.append(str(path))   # keep full path for debugging
+# STEP 1: LOAD DOCUMENTS
+for file in os.listdir(KB_FOLDER):
 
-    return texts, sources
+    if file.endswith(".txt"):
 
+        path = os.path.join(KB_FOLDER, file)
 
-# ---------- STEP 2: Chunk by TOPIC + SECTION ----------
-def chunk_text(text, source):
+        with open(path, "r") as f:
+            text = f.read()
 
-    # Extract topic
-    topic_match = re.search(r"TOPIC:\s*(.*)", text)
-    topic = topic_match.group(1).strip() if topic_match else "Unknown"
-
-    # Split by SECTION
-    parts = re.split(r"SECTION:\s*(.*)", text)
-
-    chunks = []
-    metadata = []
-
-    for i in range(1, len(parts), 2):
-        section = parts[i].strip()
-        content = parts[i+1].strip()
-
-        if len(content) < 10:
-            continue
-
-        chunk = f"""
-TOPIC: {topic}
-SECTION: {section}
-
-{content}
-""".strip()
-
-        chunks.append(chunk)
-
-        metadata.append({
-            "source": source,
-            "topic": topic,
-            "section": section
+        documents.append({
+            "source": file,
+            "content": text
         })
 
-    return chunks, metadata
+
+# STEP 2: CHUNK DOCUMENTS
+def chunk_text(text, chunk_size=40):
+
+    words = text.split()
+
+    chunks = []
+
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i:i+chunk_size])
+        chunks.append(chunk)
+
+    return chunks
 
 
-# ---------- STEP 3: Prepare dataset ----------
-def build_dataset():
+chunks = []
 
-    raw_texts, sources = load_txt_files()
+for doc in documents:
 
-    all_chunks = []
-    metadata = []
+    text_chunks = chunk_text(doc["content"])
 
-    for text, source in zip(raw_texts, sources):
+    for chunk in text_chunks:
 
-        chunks, meta = chunk_text(text, source)
+        chunks.append({
+            "text": chunk,
+            "source": doc["source"]
+        })
 
-        all_chunks.extend(chunks)
-        metadata.extend(meta)
+print("Total chunks:", len(chunks))
 
-    return all_chunks, metadata
+# STEP 3: CREATE EMBEDDINGS
+texts = [c["text"] for c in chunks]
 
+embeddings = model.encode(texts)
 
-# ---------- STEP 4: Convert to embeddings ----------
-def create_embeddings(chunks):
-    return model.encode(chunks, convert_to_numpy=True)
+print("Embeddings shape:", embeddings.shape)
 
+# STEP 4: CREATE FAISS INDEX
+dimension = embeddings.shape[1]
 
-# ---------- STEP 5: Build FAISS index ----------
-def build_index(embeddings):
+index = faiss.IndexFlatL2(dimension)
 
-    dim = embeddings.shape[1]
-
-    # cosine similarity index (better than L2 for text)
-    index = faiss.IndexFlatIP(dim)
-
-    # normalize vectors for cosine search
-    faiss.normalize_L2(embeddings)
-
-    index.add(embeddings)
-
-    return index
+index.add(np.array(embeddings))
 
 
-# ---------- STEP 6: Save everything ----------
-def save(index, chunks, metadata):
+# STEP 5: SAVE DATA
+faiss.write_index(index, "faiss.index")
 
-    faiss.write_index(index, "faiss.index")
+pickle.dump(chunks, open("chunks.pkl", "wb"))
 
-    pickle.dump(chunks, open("chunks.pkl", "wb"))
-    pickle.dump(metadata, open("meta.pkl", "wb"))
-
-
-# ---------- RUN ----------
-if __name__ == "__main__":
-
-    chunks, metadata = build_dataset()
-
-    embeddings = create_embeddings(chunks)
-
-    index = build_index(embeddings)
-
-    save(index, chunks, metadata)
-
-    print("RAG dataset built successfully!")
+print("Knowledge base built successfully")

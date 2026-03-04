@@ -4,15 +4,16 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
+# load model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load FAISS
+# load FAISS
 index = faiss.read_index("faiss.index")
 
-# Load chunks
+# load chunks
 chunks = pickle.load(open("chunks.pkl", "rb"))
 
-# Prepare BM25 corpus
+# prepare BM25
 corpus = [c["text"] for c in chunks]
 tokenized_corpus = [doc.split() for doc in corpus]
 
@@ -21,41 +22,54 @@ bm25 = BM25Okapi(tokenized_corpus)
 
 def retrieve(query, k=3):
 
-    smalltalk = ["hello", "hi", "hey", "good morning"]
-
-    if query.lower().strip() in smalltalk:
-        return []
-
     # ---------- VECTOR SEARCH ----------
     vector = model.encode([query], normalize_embeddings=True)
 
     distances, indices = index.search(np.array(vector), k)
 
     vector_results = []
+
     for idx in indices[0]:
         if idx != -1:
             vector_results.append(chunks[idx])
 
-    # ---------- BM25 KEYWORD SEARCH ----------
+
+    # ---------- BM25 SEARCH ----------
     tokenized_query = query.split()
 
-    bm25_scores = bm25.get_scores(tokenized_query)
+    scores = bm25.get_scores(tokenized_query)
 
-    top_indices = np.argsort(bm25_scores)[::-1][:k]
+    top_indices = np.argsort(scores)[::-1][:k]
 
     bm25_results = [chunks[i] for i in top_indices]
 
-    # ---------- MERGE RESULTS ----------
+
+    # ---------- MERGE ----------
     combined = vector_results + bm25_results
 
-    # remove duplicates
     unique = []
     seen = set()
 
     for item in combined:
+
         text = item["text"]
+
         if text not in seen:
             seen.add(text)
             unique.append(item)
 
     return unique[:k]
+
+
+# ---------- TEST ----------
+query = "Who is Ashok?"
+
+results = retrieve(query)
+
+print("\nQuery:", query)
+print("\nRetrieved Chunks:\n")
+
+for r in results:
+    print(r["text"])
+    print("Source:", r["source"])
+    print("------------------")
