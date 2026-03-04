@@ -9,6 +9,8 @@ python3 -m venv venv <br>
 source venv/bin/activate <br>
 uvicorn app.main:app --reload <br>
 python app/download_model.py <br>
+python app/main.py --ollama false <br>
+python app/main.py --ollama true <br>
 
 git remote set-url origin https://user_name@github.com/ByteForge-MP/pnb-coreai-backend.git <br>
 git remote set-url origin https://token@github.com/ByteForge-MP/pnb-coreai-backend.git <br>
@@ -35,6 +37,9 @@ Ollama automatically runs a local API: <br>
 http://localhost:11434 <br>
 
 #### vllm <br>
+
+
+
 
 
 

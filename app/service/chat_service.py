@@ -1,28 +1,65 @@
 import json
+import torch
+import fitz
+import openpyxl
+import httpx
+
+from io import BytesIO
 from threading import Thread
 from transformers import TextIteratorStreamer
+
 from app.ai.openai_client import openai_client, gemini_client
 from app.retriever import retrieve
 
-PNB_SYSTEM_PROMPT = """
-You are a highly qualified digital assistant of Punjab National Bank of India.
+import logging
 
+logger = logging.getLogger("chat_logger")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+
+PNB_SYSTEM_PROMPT = """
 Rules you must follow:
 - Respond professionally and formally.
 - Give accurate banking and compliance-oriented answers.
 - If unsure, say verification is required instead of guessing.
-- Do not provide unsafe financial advice.
-- Structure responses clearly.
-- Never reveal internal knowledge sources or retrieval process.
 """
 
-MAX_CONTEXT_CHARS = 3500   # prevents prompt overflow
+MAX_CONTEXT_CHARS = 3500
 
 
 class ChatService:
 
-    async def get_streaming_response(self, app, prompt: str, model: str, time: str):
+    async def get_streaming_response(
+        self,
+        app,
+        prompt: str,
+        model: str,
+        time: str,
+        file=None
+    ):
+
         try:
+
+            # -----------------------------
+            # OLLAMA MODE
+            # -----------------------------
+            if getattr(app.state, "use_ollama", False):
+
+                async for chunk in self._stream_ollama(prompt, time, file):
+                    yield chunk
+
+                yield "data: [DONE]\n\n"
+                return
+
+            # -----------------------------
+            # NORMAL SWITCH CASE
+            # -----------------------------
+
             match model:
 
                 case "gpt-4o" | "gpt-3.5-turbo":
@@ -34,66 +71,148 @@ class ChatService:
                         yield chunk
 
                 case "pnb-local-model":
-                    async for chunk in self._stream_local(app, prompt, model, time):
+                    async for chunk in self._stream_local(app, prompt, time, file):
                         yield chunk
 
                 case _:
-                    async for chunk in self._stream_local(app, prompt, model, time):
+                    async for chunk in self._stream_local(app, prompt, time, file):
                         yield chunk
 
         except Exception as e:
+
+            logger.error(str(e))
+
             yield f"data: {json.dumps({'error': 'Switch Case Failed', 'details': str(e)})}\n\n"
 
         yield "data: [DONE]\n\n"
 
 
-    # ---------- OPENAI ----------
+    # -------------------------------------------------
+    # OPENAI STREAM
+    # -------------------------------------------------
+
     async def _stream_openai(self, prompt, model):
+
         stream = await openai_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
         )
+
         async for chunk in stream:
             content = chunk.choices[0].delta.content
             if content:
                 yield f"data: {json.dumps({'text': content, 'provider': 'openai'})}\n\n"
 
 
-    # ---------- GEMINI ----------
+    # -------------------------------------------------
+    # GEMINI STREAM
+    # -------------------------------------------------
+
     async def _stream_gemini(self, prompt, model):
-        fallback_stream = await gemini_client.chat.completions.create(
+
+        stream = await gemini_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
         )
-        async for chunk in fallback_stream:
+
+        async for chunk in stream:
             content = chunk.choices[0].delta.content
             if content:
                 yield f"data: {json.dumps({'text': content, 'provider': 'gemini'})}\n\n"
 
 
-    # ---------- LOCAL MODEL WITH RAG ----------
-    async def _stream_local(self, app, prompt: str, model_name: str, time: str):
+    # -------------------------------------------------
+    # OLLAMA STREAM
+    # -------------------------------------------------
+
+    async def _stream_ollama(self, prompt, time, file):
+
+        file_content = ""
+
+        if file:
+            file_content = await self._extract_file(file)
+
+        retrieved_chunks = retrieve(prompt)
+
+        context_block = "\n".join(retrieved_chunks)
+
+        combined_context = f"""
+Internal Banking Knowledge:
+{context_block}
+
+User Uploaded Document:
+{file_content}
+"""
+
+        combined_context = combined_context[:MAX_CONTEXT_CHARS]
+
+        final_prompt = f"""
+
+Current time: {time}
+
+User Question:
+{prompt}
+"""
+
+        async with httpx.AsyncClient(timeout=None) as client:
+
+            async with client.stream(
+                "POST",
+                OLLAMA_URL,
+                json={
+                    "model": "mistral",
+                    "prompt": final_prompt,
+                    "stream": True
+                }
+            ) as response:
+
+                async for line in response.aiter_lines():
+
+                    if not line:
+                        continue
+
+                    data = json.loads(line)
+
+                    if "response" in data:
+
+                        yield f"data: {json.dumps({'text': data['response'], 'provider': 'ollama'})}\n\n"
+
+
+    # -------------------------------------------------
+    # LOCAL MODEL STREAM
+    # -------------------------------------------------
+
+    async def _stream_local(self, app, prompt: str, time: str, file=None):
 
         local_model = app.state.model
         tokenizer = app.state.tokenizer
         device = getattr(app.state, "device", "cpu")
 
-        # 🔹 STEP 1: Retrieve relevant knowledge silently
+        file_content = ""
+
+        if file:
+            file_content = await self._extract_file(file)
+
         retrieved_chunks = retrieve(prompt)
 
         context_block = "\n".join(retrieved_chunks)
 
-        # 🔹 STEP 2: Limit context size (very important in production)
-        context_block = context_block[:MAX_CONTEXT_CHARS]
+        combined_context = f"""
+Internal Banking Knowledge:
+{context_block}
 
-        # 🔹 STEP 3: Build system prompt with hidden RAG context
+User Uploaded Document:
+{file_content}
+"""
+
+        combined_context = combined_context[:MAX_CONTEXT_CHARS]
+
         system_message = f"""
 {PNB_SYSTEM_PROMPT}
 
-Internal Banking Knowledge:
-{context_block}
+{combined_context}
 
 Current time: {time}
 """
@@ -103,16 +222,17 @@ Current time: {time}
             {"role": "user", "content": prompt},
         ]
 
-        # 🔹 STEP 4: Tokenize
         input_text = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True
         )
 
-        inputs = tokenizer(input_text, return_tensors="pt").to(device)
+        inputs = tokenizer(
+            input_text,
+            return_tensors="pt"
+        ).to(device)
 
-        # 🔹 STEP 5: Setup streamer
         streamer = TextIteratorStreamer(
             tokenizer,
             skip_prompt=True,
@@ -120,19 +240,71 @@ Current time: {time}
         )
 
         generation_kwargs = dict(
-            inputs,
+            **inputs,
             streamer=streamer,
-            max_new_tokens=2000,
+            max_new_tokens=1000,
             temperature=0.6,
+            top_p=0.9,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id
         )
 
-        # 🔹 STEP 6: Generate in background thread
-        thread = Thread(target=local_model.generate, kwargs=generation_kwargs)
+        thread = Thread(
+            target=local_model.generate,
+            kwargs=generation_kwargs
+        )
         thread.start()
 
-        # 🔹 STEP 7: Stream tokens
         for new_text in streamer:
             if new_text:
                 yield f"data: {json.dumps({'text': new_text, 'provider': 'pnb-local'})}\n\n"
+
+
+    # -------------------------------------------------
+    # FILE EXTRACTION
+    # -------------------------------------------------
+
+    async def _extract_file(self, file):
+
+        content_type = file.content_type
+
+        if content_type == "application/pdf":
+
+            pdf_bytes = await file.read()
+
+            pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            text = ""
+
+            for page in pdf_document:
+                text += page.get_text()
+
+            return text
+
+        elif content_type in [
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel"
+        ]:
+
+            excel_bytes = await file.read()
+
+            workbook = openpyxl.load_workbook(
+                filename=BytesIO(excel_bytes),
+                data_only=True
+            )
+
+            text = ""
+
+            for sheet in workbook:
+                for row in sheet.iter_rows(values_only=True):
+
+                    row_text = " ".join(
+                        [str(cell) for cell in row if cell is not None]
+                    )
+
+                    text += row_text + "\n"
+
+            return text
+
+        else:
+            return ""

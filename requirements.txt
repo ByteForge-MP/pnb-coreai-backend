@@ -7,3 +7,7 @@ pyyaml
 faiss-cpu
 sentence-transformers
 numpy
+pymupdf
+openpyxl
+python-multipart
+#vllm
