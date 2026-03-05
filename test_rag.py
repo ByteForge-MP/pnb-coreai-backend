@@ -198,7 +198,7 @@ def retrieve(query, k=3):
 # STEP 9: TEST RETRIEVAL
 # -------------------------------------------------
 
-query = "Who is AGM ?"
+query = "Who is the MD of SBI?"
 
 results = retrieve(query)
 
