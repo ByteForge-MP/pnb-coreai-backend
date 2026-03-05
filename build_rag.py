@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 
 # embedding model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+model = SentenceTransformer("BAAI/bge-small-en-v1.5")
 
 KB_FOLDER = "rag_data"
 
@@ -28,18 +28,10 @@ for file in os.listdir(KB_FOLDER):
 
 
 # STEP 2: CHUNK DOCUMENTS
-def chunk_text(text, chunk_size=40):
+def chunk_text(text):
 
-    words = text.split()
-
-    chunks = []
-
-    for i in range(0, len(words), chunk_size):
-        chunk = " ".join(words[i:i+chunk_size])
-        chunks.append(chunk)
-
-    return chunks
-
+    words = text.split(".")
+    return [word.strip() for word in words if word.strip()]
 
 chunks = []
 
@@ -59,14 +51,16 @@ print("Total chunks:", len(chunks))
 # STEP 3: CREATE EMBEDDINGS
 texts = [c["text"] for c in chunks]
 
-embeddings = model.encode(texts)
+embeddings = model.encode(texts).astype("float32")
 
 print("Embeddings shape:", embeddings.shape)
+
+faiss.normalize_L2(embeddings)
 
 # STEP 4: CREATE FAISS INDEX
 dimension = embeddings.shape[1]
 
-index = faiss.IndexFlatL2(dimension)
+index = faiss.IndexFlatIP(dimension)
 
 index.add(np.array(embeddings))
 

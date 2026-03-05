@@ -24,9 +24,10 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 
 PNB_SYSTEM_PROMPT = """
 Rules you must follow:
-- Respond professionally and formally.
-- Give accurate banking and compliance-oriented answers.
-- If unsure, say verification is required instead of guessing.
+- You are an assistant for a bank's internal use, helping employees answer questions based on the bank's knowledge and documents.
+- Always use the provided knowledge and documents to answer questions. Do not use any external information.
+- If the answer is not in the provided knowledge or documents, say "Sorry, I don't know the answer to that question based on the information I have."
+- Be concise and to the point in your answers, using only the relevant information from the provided knowledge and documents.
 """
 
 MAX_CONTEXT_CHARS = 3500
@@ -57,7 +58,7 @@ class ChatService:
                 return
 
             # -----------------------------
-            # NORMAL SWITCH CASE
+            # MODEL SWITCH
             # -----------------------------
 
             match model:
@@ -100,7 +101,9 @@ class ChatService:
         )
 
         async for chunk in stream:
+
             content = chunk.choices[0].delta.content
+
             if content:
                 yield f"data: {json.dumps({'text': content, 'provider': 'openai'})}\n\n"
 
@@ -118,7 +121,9 @@ class ChatService:
         )
 
         async for chunk in stream:
+
             content = chunk.choices[0].delta.content
+
             if content:
                 yield f"data: {json.dumps({'text': content, 'provider': 'gemini'})}\n\n"
 
@@ -136,7 +141,8 @@ class ChatService:
 
         retrieved_chunks = retrieve(prompt)
 
-        context_block = "\n".join(retrieved_chunks)
+        # FIX 1: Convert dict → text
+        context_block = "\n".join([chunk["text"] for chunk in retrieved_chunks])
 
         combined_context = f"""
 Internal Banking Knowledge:
@@ -148,7 +154,11 @@ User Uploaded Document:
 
         combined_context = combined_context[:MAX_CONTEXT_CHARS]
 
+        # FIX 2: Include RAG context in prompt
         final_prompt = f"""
+{PNB_SYSTEM_PROMPT}
+
+{combined_context}
 
 Current time: {time}
 
@@ -197,7 +207,8 @@ User Question:
 
         retrieved_chunks = retrieve(prompt)
 
-        context_block = "\n".join(retrieved_chunks)
+        # FIX 1: Convert dict → text
+        context_block = "\n".join([chunk["text"] for chunk in retrieved_chunks])
 
         combined_context = f"""
 Internal Banking Knowledge:
@@ -256,6 +267,7 @@ Current time: {time}
         thread.start()
 
         for new_text in streamer:
+
             if new_text:
                 yield f"data: {json.dumps({'text': new_text, 'provider': 'pnb-local'})}\n\n"
 
