@@ -10,4 +10,5 @@ numpy
 pymupdf
 openpyxl
 python-multipart
+pandas
 #vllm

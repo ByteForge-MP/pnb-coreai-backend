@@ -1,8 +1,8 @@
 import json
 import torch
 import fitz
-import openpyxl
 import httpx
+import pandas as pd
 
 from io import BytesIO
 from threading import Thread
@@ -25,9 +25,11 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 PNB_SYSTEM_PROMPT = """
 Rules you must follow:
 - You are an assistant for a bank's internal use, helping employees answer questions based on the bank's knowledge and documents.
-- Always use the provided knowledge and documents to answer questions. Do not use any external information.
-- If the answer is not in the provided knowledge or documents, say "Sorry, I don't know the answer to that question based on the information I have."
-- Be concise and to the point in your answers, using only the relevant information from the provided knowledge and documents.
+- Always use the provided knowledge and documents to answer questions.
+- Do not use any external information.
+- If the answer is not in the provided knowledge or documents, say:
+  "Sorry, I don't know the answer to that question based on the information I have."
+- Be concise and use only relevant information.
 """
 
 MAX_CONTEXT_CHARS = 3500
@@ -46,9 +48,6 @@ class ChatService:
 
         try:
 
-            # -----------------------------
-            # OLLAMA MODE
-            # -----------------------------
             if getattr(app.state, "use_ollama", False):
 
                 async for chunk in self._stream_ollama(prompt, time, file):
@@ -56,10 +55,6 @@ class ChatService:
 
                 yield "data: [DONE]\n\n"
                 return
-
-            # -----------------------------
-            # MODEL SWITCH
-            # -----------------------------
 
             match model:
 
@@ -87,7 +82,6 @@ class ChatService:
 
         yield "data: [DONE]\n\n"
 
-
     # -------------------------------------------------
     # OPENAI STREAM
     # -------------------------------------------------
@@ -106,7 +100,6 @@ class ChatService:
 
             if content:
                 yield f"data: {json.dumps({'text': content, 'provider': 'openai'})}\n\n"
-
 
     # -------------------------------------------------
     # GEMINI STREAM
@@ -127,6 +120,44 @@ class ChatService:
             if content:
                 yield f"data: {json.dumps({'text': content, 'provider': 'gemini'})}\n\n"
 
+    # -------------------------------------------------
+    # BUILD CONTEXT
+    # -------------------------------------------------
+
+    async def _build_context(self, prompt, file):
+
+        if file:
+
+            file_content = await self._extract_file(file)
+
+            context = f"""
+User Uploaded Document:
+{file_content}
+"""
+
+            system_prompt = """
+You are analyzing a user uploaded document.
+
+Answer ONLY using the document content.
+Do not use external knowledge.
+"""
+
+        else:
+
+            retrieved_chunks = retrieve(prompt)
+
+            context_block = "\n".join([chunk["text"] for chunk in retrieved_chunks])
+
+            context = f"""
+Internal Banking Knowledge:
+{context_block}
+"""
+
+            system_prompt = PNB_SYSTEM_PROMPT
+
+        context = context[:MAX_CONTEXT_CHARS]
+
+        return system_prompt, context
 
     # -------------------------------------------------
     # OLLAMA STREAM
@@ -134,31 +165,12 @@ class ChatService:
 
     async def _stream_ollama(self, prompt, time, file):
 
-        file_content = ""
+        system_prompt, context = await self._build_context(prompt, file)
 
-        if file:
-            file_content = await self._extract_file(file)
-
-        retrieved_chunks = retrieve(prompt)
-
-        # FIX 1: Convert dict → text
-        context_block = "\n".join([chunk["text"] for chunk in retrieved_chunks])
-
-        combined_context = f"""
-Internal Banking Knowledge:
-{context_block}
-
-User Uploaded Document:
-{file_content}
-"""
-
-        combined_context = combined_context[:MAX_CONTEXT_CHARS]
-
-        # FIX 2: Include RAG context in prompt
         final_prompt = f"""
-{PNB_SYSTEM_PROMPT}
+{system_prompt}
 
-{combined_context}
+{context}
 
 Current time: {time}
 
@@ -189,7 +201,6 @@ User Question:
 
                         yield f"data: {json.dumps({'text': data['response'], 'provider': 'ollama'})}\n\n"
 
-
     # -------------------------------------------------
     # LOCAL MODEL STREAM
     # -------------------------------------------------
@@ -200,30 +211,12 @@ User Question:
         tokenizer = app.state.tokenizer
         device = getattr(app.state, "device", "cpu")
 
-        file_content = ""
-
-        if file:
-            file_content = await self._extract_file(file)
-
-        retrieved_chunks = retrieve(prompt)
-
-        # FIX 1: Convert dict → text
-        context_block = "\n".join([chunk["text"] for chunk in retrieved_chunks])
-
-        combined_context = f"""
-Internal Banking Knowledge:
-{context_block}
-
-User Uploaded Document:
-{file_content}
-"""
-
-        combined_context = combined_context[:MAX_CONTEXT_CHARS]
+        system_prompt, context = await self._build_context(prompt, file)
 
         system_message = f"""
-{PNB_SYSTEM_PROMPT}
+{system_prompt}
 
-{combined_context}
+{context}
 
 Current time: {time}
 """
@@ -264,13 +257,13 @@ Current time: {time}
             target=local_model.generate,
             kwargs=generation_kwargs
         )
+
         thread.start()
 
         for new_text in streamer:
 
             if new_text:
                 yield f"data: {json.dumps({'text': new_text, 'provider': 'pnb-local'})}\n\n"
-
 
     # -------------------------------------------------
     # FILE EXTRACTION
@@ -279,6 +272,10 @@ Current time: {time}
     async def _extract_file(self, file):
 
         content_type = file.content_type
+
+        # -----------------------------
+        # PDF
+        # -----------------------------
 
         if content_type == "application/pdf":
 
@@ -293,6 +290,10 @@ Current time: {time}
 
             return text
 
+        # -----------------------------
+        # EXCEL
+        # -----------------------------
+
         elif content_type in [
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "application/vnd.ms-excel"
@@ -300,23 +301,26 @@ Current time: {time}
 
             excel_bytes = await file.read()
 
-            workbook = openpyxl.load_workbook(
-                filename=BytesIO(excel_bytes),
-                data_only=True
-            )
+            df = pd.read_excel(BytesIO(excel_bytes))
 
-            text = ""
+            schema = {
+                "columns": df.columns.tolist(),
+                "dtypes": df.dtypes.astype(str).to_dict()
+            }
 
-            for sheet in workbook:
-                for row in sheet.iter_rows(values_only=True):
+            data_json = df.to_json(orient="records")
 
-                    row_text = " ".join(
-                        [str(cell) for cell in row if cell is not None]
-                    )
+            return f"""
+Excel Schema:
+{json.dumps(schema)}
 
-                    text += row_text + "\n"
+Excel Data:
+{data_json}
+"""
 
-            return text
+        # -----------------------------
+        # OTHER
+        # -----------------------------
 
         else:
             return ""
