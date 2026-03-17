@@ -11,4 +11,5 @@ pymupdf
 openpyxl
 python-multipart
 pandas
+requests
 #vllm

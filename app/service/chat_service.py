@@ -3,15 +3,21 @@ import torch
 import fitz
 import httpx
 import pandas as pd
+import logging
 
 from io import BytesIO
 from threading import Thread
 from transformers import TextIteratorStreamer
 
 from app.ai.openai_client import openai_client, gemini_client
-from app.retriever import retrieve
+from app.retriever import retrieve, embed_query
+from app.search_service import search_searxng
+from app.dynamic_rag import build_dynamic_embeddings
+from app.query_router import route_query
+from app.reranker import rerank
+from app.context_compressor import compress_context
+from app.memory_store import add_memory, get_memory
 
-import logging
 
 logger = logging.getLogger("chat_logger")
 
@@ -22,29 +28,30 @@ logging.basicConfig(
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
-PNB_SYSTEM_PROMPT = """
-Rules you must follow:
-- You are an assistant for a bank's internal use, helping employees answer questions based on the bank's knowledge and documents.
-- Always use the provided knowledge and documents to answer questions.
-- Do not use any external information.
-- If the answer is not in the provided knowledge or documents, say:
-  "Sorry, I don't know the answer to that question based on the information I have."
-- Be concise and use only relevant information.
-"""
 
-MAX_CONTEXT_CHARS = 3500
+PNB_SYSTEM_PROMPT = """
+You are an assistant for a bank's internal use.
+
+Rules:
+- Use the provided knowledge.
+- If information is missing say you don't know.
+- Be concise and factual.
+
+Conversation Style:
+- At the end of helpful answers, ask ONE short follow-up question.
+- Do not ask generic greetings.
+- Do not ask a question if the answer is already complete.
+"""
 
 
 class ChatService:
 
-    async def get_streaming_response(
-        self,
-        app,
-        prompt: str,
-        model: str,
-        time: str,
-        file=None
-    ):
+
+# ---------------------------------------------------------
+# MAIN STREAM ROUTER
+# ---------------------------------------------------------
+
+    async def get_streaming_response(self, app, prompt, model, time, file=None):
 
         try:
 
@@ -59,18 +66,22 @@ class ChatService:
             match model:
 
                 case "gpt-4o" | "gpt-3.5-turbo":
+
                     async for chunk in self._stream_openai(prompt, model):
                         yield chunk
 
                 case "gemini-3-flash-preview":
+
                     async for chunk in self._stream_gemini(prompt, model):
                         yield chunk
 
                 case "pnb-local-model":
+
                     async for chunk in self._stream_local(app, prompt, time, file):
                         yield chunk
 
                 case _:
+
                     async for chunk in self._stream_local(app, prompt, time, file):
                         yield chunk
 
@@ -82,47 +93,74 @@ class ChatService:
 
         yield "data: [DONE]\n\n"
 
-    # -------------------------------------------------
-    # OPENAI STREAM
-    # -------------------------------------------------
+
+# ---------------------------------------------------------
+# OPENAI STREAM
+# ---------------------------------------------------------
 
     async def _stream_openai(self, prompt, model):
 
+        system_prompt, context, image = await self._build_context(prompt, None)
+
         stream = await openai_client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt + context},
+                {"role": "user", "content": prompt},
+            ],
             stream=True,
         )
+
+        full_response = ""
 
         async for chunk in stream:
 
             content = chunk.choices[0].delta.content
 
             if content:
+
+                full_response += content
+
                 yield f"data: {json.dumps({'text': content, 'provider': 'openai'})}\n\n"
 
-    # -------------------------------------------------
-    # GEMINI STREAM
-    # -------------------------------------------------
+        add_memory(prompt, full_response)
+
+
+# ---------------------------------------------------------
+# GEMINI STREAM
+# ---------------------------------------------------------
 
     async def _stream_gemini(self, prompt, model):
 
+        system_prompt, context, image = await self._build_context(prompt, None)
+
         stream = await gemini_client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": system_prompt + context},
+                {"role": "user", "content": prompt},
+            ],
             stream=True,
         )
+
+        full_response = ""
 
         async for chunk in stream:
 
             content = chunk.choices[0].delta.content
 
             if content:
+
+                full_response += content
+
                 yield f"data: {json.dumps({'text': content, 'provider': 'gemini'})}\n\n"
 
-    # -------------------------------------------------
-    # BUILD CONTEXT
-    # -------------------------------------------------
+        add_memory(prompt, full_response)
+
+
+# ---------------------------------------------------------
+# CONTEXT BUILDER (RAG)
+# ---------------------------------------------------------
 
     async def _build_context(self, prompt, file):
 
@@ -137,35 +175,93 @@ User Uploaded Document:
 
             system_prompt = """
 You are analyzing a user uploaded document.
-
 Answer ONLY using the document content.
-Do not use external knowledge.
 """
 
-        else:
+            return system_prompt, compress_context(context), None
+
+
+        route = route_query(prompt)
+
+        static_chunks = []
+        web_chunks = []
+        image = None
+
+
+        # -------------------------
+        # KNOWLEDGE BASE
+        # -------------------------
+
+        if route == "kb":
 
             retrieved_chunks = retrieve(prompt)
 
-            context_block = "\n".join([chunk["text"] for chunk in retrieved_chunks])
+            static_chunks = [chunk["text"] for chunk in retrieved_chunks]
 
-            context = f"""
-Internal Banking Knowledge:
+
+        # -------------------------
+        # WEB SEARCH
+        # -------------------------
+
+        else:
+
+            search_docs = search_searxng(prompt)
+
+            if search_docs:
+
+                dynamic_index, dynamic_chunks = build_dynamic_embeddings(search_docs)
+
+                query_embedding = embed_query(prompt)
+
+                D, I = dynamic_index.search(query_embedding, 5)
+
+                for idx in I[0]:
+
+                    chunk = dynamic_chunks[idx]
+
+                    if isinstance(chunk, dict):
+
+                        web_chunks.append(chunk.get("text", ""))
+
+                        if not image and chunk.get("image"):
+                            image = chunk["image"]
+
+                    else:
+
+                        web_chunks.append(chunk)
+
+
+        all_docs = static_chunks + web_chunks
+
+        if not all_docs:
+
+            return PNB_SYSTEM_PROMPT, "No knowledge retrieved.", image
+
+
+        best_docs = rerank(prompt, all_docs, top_k=5)
+
+        context_block = "\n".join(best_docs)
+
+        memory = get_memory()
+
+        context = f"""
+Conversation History:
+{memory}
+
+Retrieved Knowledge:
 {context_block}
 """
 
-            system_prompt = PNB_SYSTEM_PROMPT
+        return PNB_SYSTEM_PROMPT, compress_context(context), image
 
-        context = context[:MAX_CONTEXT_CHARS]
 
-        return system_prompt, context
-
-    # -------------------------------------------------
-    # OLLAMA STREAM
-    # -------------------------------------------------
+# ---------------------------------------------------------
+# OLLAMA STREAM
+# ---------------------------------------------------------
 
     async def _stream_ollama(self, prompt, time, file):
 
-        system_prompt, context = await self._build_context(prompt, file)
+        system_prompt, context, image = await self._build_context(prompt, file)
 
         final_prompt = f"""
 {system_prompt}
@@ -176,6 +272,9 @@ Current time: {time}
 
 User Question:
 {prompt}
+
+Answer clearly using the context.
+After answering ask ONE relevant follow-up question.
 """
 
         async with httpx.AsyncClient(timeout=None) as client:
@@ -190,6 +289,12 @@ User Question:
                 }
             ) as response:
 
+                full_response = ""
+
+                # send image once
+                if image:
+                    yield f"data: {json.dumps({'image': image})}\n\n"
+
                 async for line in response.aiter_lines():
 
                     if not line:
@@ -199,19 +304,26 @@ User Question:
 
                     if "response" in data:
 
-                        yield f"data: {json.dumps({'text': data['response'], 'provider': 'ollama'})}\n\n"
+                        text = data["response"]
 
-    # -------------------------------------------------
-    # LOCAL MODEL STREAM
-    # -------------------------------------------------
+                        full_response += text
 
-    async def _stream_local(self, app, prompt: str, time: str, file=None):
+                        yield f"data: {json.dumps({'text': text, 'provider': 'ollama'})}\n\n"
+
+                add_memory(prompt, full_response)
+
+
+# ---------------------------------------------------------
+# LOCAL MODEL STREAM
+# ---------------------------------------------------------
+
+    async def _stream_local(self, app, prompt, time, file=None):
 
         local_model = app.state.model
         tokenizer = app.state.tokenizer
         device = getattr(app.state, "device", "cpu")
 
-        system_prompt, context = await self._build_context(prompt, file)
+        system_prompt, context, image = await self._build_context(prompt, file)
 
         system_message = f"""
 {system_prompt}
@@ -247,7 +359,7 @@ Current time: {time}
             **inputs,
             streamer=streamer,
             max_new_tokens=1000,
-            temperature=0.6,
+            temperature=0.7,
             top_p=0.9,
             do_sample=True,
             pad_token_id=tokenizer.eos_token_id
@@ -260,22 +372,26 @@ Current time: {time}
 
         thread.start()
 
+        full_response = ""
+
         for new_text in streamer:
 
             if new_text:
+
+                full_response += new_text
+
                 yield f"data: {json.dumps({'text': new_text, 'provider': 'pnb-local'})}\n\n"
 
-    # -------------------------------------------------
-    # FILE EXTRACTION
-    # -------------------------------------------------
+        add_memory(prompt, full_response)
+
+
+# ---------------------------------------------------------
+# FILE EXTRACTION
+# ---------------------------------------------------------
 
     async def _extract_file(self, file):
 
         content_type = file.content_type
-
-        # -----------------------------
-        # PDF
-        # -----------------------------
 
         if content_type == "application/pdf":
 
@@ -290,9 +406,6 @@ Current time: {time}
 
             return text
 
-        # -----------------------------
-        # EXCEL
-        # -----------------------------
 
         elif content_type in [
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -318,9 +431,7 @@ Excel Data:
 {data_json}
 """
 
-        # -----------------------------
-        # OTHER
-        # -----------------------------
 
         else:
+
             return ""

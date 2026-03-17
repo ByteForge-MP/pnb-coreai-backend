@@ -30,6 +30,14 @@ with open("abbreviations.json", "r") as f:
 def tokenize(text):
     return re.findall(r"\w+", text.lower())
 
+
+def embed_query(query):
+    # encode the query using the same model
+    q_emb = model.encode([query], convert_to_numpy=True).astype("float32")
+    # normalize to L2, just like the FAISS embeddings
+    faiss.normalize_L2(q_emb)
+    return q_emb
+
 # -------------------------------
 # QUERY EXPANSION
 # -------------------------------

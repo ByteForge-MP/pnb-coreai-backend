@@ -43,6 +43,10 @@ lsof -i :11434 <br>
 kill -9 11434 <br>
 pkill ollama <br>
 
+#### Docker <br>
+docker run -d -p 8080:8080 --name searxng searxng/searxng <br>
+
+
 
 
 
