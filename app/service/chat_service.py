@@ -4,12 +4,13 @@ import fitz
 import httpx
 import pandas as pd
 import logging
+import time as time_module
 
 from io import BytesIO
 from threading import Thread
 from transformers import TextIteratorStreamer
 
-from app.ai.openai_client import openai_client, gemini_client
+from app.ai.openai_client import get_gemini_client, get_openai_client
 from app.retriever import retrieve, embed_query
 from app.search_service import search_searxng
 from app.dynamic_rag import build_dynamic_embeddings
@@ -26,7 +27,8 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://ollama:11434/api/generate"
 
 
 PNB_SYSTEM_PROMPT = """
@@ -46,51 +48,79 @@ Conversation Style:
 
 class ChatService:
 
+    def _prompt_preview(self, prompt, limit=120):
+        cleaned = " ".join(prompt.split())
+        return cleaned[:limit]
+
 
 # ---------------------------------------------------------
 # MAIN STREAM ROUTER
 # ---------------------------------------------------------
 
-    async def get_streaming_response(self, app, prompt, model, time, file=None):
+    async def get_streaming_response(self, app, prompt, model, time, file=None, request_id="unknown"):
+        started_at = time_module.monotonic()
+
+        logger.info(
+            "[%s] Stream started | model=%s | ollama_mode=%s | prompt_preview=%r",
+            request_id,
+            model,
+            getattr(app.state, "use_ollama", False),
+            self._prompt_preview(prompt),
+        )
 
         try:
 
             if getattr(app.state, "use_ollama", False):
+                logger.info("[%s] Routing request to Ollama stream", request_id)
 
-                async for chunk in self._stream_ollama(prompt, time, file):
+                async for chunk in self._stream_ollama(prompt, time, file, request_id):
                     yield chunk
 
+                logger.info(
+                    "[%s] Stream completed via Ollama in %.2fs",
+                    request_id,
+                    time_module.monotonic() - started_at,
+                )
                 yield "data: [DONE]\n\n"
                 return
 
             match model:
 
                 case "gpt-4o" | "gpt-3.5-turbo":
+                    logger.info("[%s] Routing request to OpenAI stream", request_id)
 
-                    async for chunk in self._stream_openai(prompt, model):
+                    async for chunk in self._stream_openai(prompt, model, request_id):
                         yield chunk
 
                 case "gemini-3-flash-preview":
+                    logger.info("[%s] Routing request to Gemini stream", request_id)
 
-                    async for chunk in self._stream_gemini(prompt, model):
+                    async for chunk in self._stream_gemini(prompt, model, request_id):
                         yield chunk
 
                 case "pnb-local-model":
+                    logger.info("[%s] Routing request to local model stream", request_id)
 
-                    async for chunk in self._stream_local(app, prompt, time, file):
+                    async for chunk in self._stream_local(app, prompt, time, file, request_id):
                         yield chunk
 
                 case _:
+                    logger.info("[%s] Unknown model %s, defaulting to local stream", request_id, model)
 
-                    async for chunk in self._stream_local(app, prompt, time, file):
+                    async for chunk in self._stream_local(app, prompt, time, file, request_id):
                         yield chunk
 
         except Exception as e:
 
-            logger.error(str(e))
+            logger.exception("[%s] Streaming failed: %s", request_id, str(e))
 
             yield f"data: {json.dumps({'error': 'Switch Case Failed', 'details': str(e)})}\n\n"
 
+        logger.info(
+            "[%s] Stream finished in %.2fs",
+            request_id,
+            time_module.monotonic() - started_at,
+        )
         yield "data: [DONE]\n\n"
 
 
@@ -98,9 +128,11 @@ class ChatService:
 # OPENAI STREAM
 # ---------------------------------------------------------
 
-    async def _stream_openai(self, prompt, model):
+    async def _stream_openai(self, prompt, model, request_id):
 
-        system_prompt, context, image = await self._build_context(prompt, None)
+        system_prompt, context, image = await self._build_context(prompt, None, request_id)
+        openai_client = get_openai_client()
+        logger.info("[%s] OpenAI request started | model=%s", request_id, model)
 
         stream = await openai_client.chat.completions.create(
             model=model,
@@ -112,27 +144,35 @@ class ChatService:
         )
 
         full_response = ""
+        chunk_count = 0
 
         async for chunk in stream:
 
             content = chunk.choices[0].delta.content
 
             if content:
+                chunk_count += 1
+
+                if chunk_count == 1:
+                    logger.info("[%s] OpenAI first chunk received", request_id)
 
                 full_response += content
 
                 yield f"data: {json.dumps({'text': content, 'provider': 'openai'})}\n\n"
 
         add_memory(prompt, full_response)
+        logger.info("[%s] OpenAI stream completed | chunks=%s", request_id, chunk_count)
 
 
 # ---------------------------------------------------------
 # GEMINI STREAM
 # ---------------------------------------------------------
 
-    async def _stream_gemini(self, prompt, model):
+    async def _stream_gemini(self, prompt, model, request_id):
 
-        system_prompt, context, image = await self._build_context(prompt, None)
+        system_prompt, context, image = await self._build_context(prompt, None, request_id)
+        gemini_client = get_gemini_client()
+        logger.info("[%s] Gemini request started | model=%s", request_id, model)
 
         stream = await gemini_client.chat.completions.create(
             model=model,
@@ -144,27 +184,40 @@ class ChatService:
         )
 
         full_response = ""
+        chunk_count = 0
 
         async for chunk in stream:
 
             content = chunk.choices[0].delta.content
 
             if content:
+                chunk_count += 1
+
+                if chunk_count == 1:
+                    logger.info("[%s] Gemini first chunk received", request_id)
 
                 full_response += content
 
                 yield f"data: {json.dumps({'text': content, 'provider': 'gemini'})}\n\n"
 
         add_memory(prompt, full_response)
+        logger.info("[%s] Gemini stream completed | chunks=%s", request_id, chunk_count)
 
 
 # ---------------------------------------------------------
 # CONTEXT BUILDER (RAG)
 # ---------------------------------------------------------
 
-    async def _build_context(self, prompt, file):
+    async def _build_context(self, prompt, file, request_id):
+        logger.info("[%s] Building context | has_file=%s", request_id, file is not None)
 
         if file:
+            logger.info(
+                "[%s] Extracting uploaded file | filename=%s | content_type=%s",
+                request_id,
+                file.filename,
+                file.content_type,
+            )
 
             file_content = await self._extract_file(file)
 
@@ -178,10 +231,18 @@ You are analyzing a user uploaded document.
 Answer ONLY using the document content.
 """
 
-            return system_prompt, compress_context(context), None
+            compressed = compress_context(context)
+            logger.info(
+                "[%s] File context built | extracted_chars=%s | compressed_chars=%s",
+                request_id,
+                len(file_content),
+                len(compressed),
+            )
+            return system_prompt, compressed, None
 
 
         route = route_query(prompt)
+        logger.info("[%s] Query routed to %s", request_id, route)
 
         static_chunks = []
         web_chunks = []
@@ -195,6 +256,7 @@ Answer ONLY using the document content.
         if route == "kb":
 
             retrieved_chunks = retrieve(prompt)
+            logger.info("[%s] Retrieved %s knowledge base chunks", request_id, len(retrieved_chunks))
 
             static_chunks = [chunk["text"] for chunk in retrieved_chunks]
 
@@ -205,7 +267,8 @@ Answer ONLY using the document content.
 
         else:
 
-            search_docs = search_searxng(prompt)
+            search_docs = search_searxng(prompt, request_id=request_id)
+            logger.info("[%s] Web search returned %s documents", request_id, len(search_docs) if search_docs else 0)
 
             if search_docs:
 
@@ -232,13 +295,16 @@ Answer ONLY using the document content.
 
 
         all_docs = static_chunks + web_chunks
+        logger.info("[%s] Total context chunks before rerank: %s", request_id, len(all_docs))
 
         if not all_docs:
+            logger.warning("[%s] No knowledge retrieved for prompt", request_id)
 
             return PNB_SYSTEM_PROMPT, "No knowledge retrieved.", image
 
 
         best_docs = rerank(prompt, all_docs, top_k=5)
+        logger.info("[%s] Reranked context to %s chunks", request_id, len(best_docs))
 
         context_block = "\n".join(best_docs)
 
@@ -252,16 +318,18 @@ Retrieved Knowledge:
 {context_block}
 """
 
-        return PNB_SYSTEM_PROMPT, compress_context(context), image
+        compressed = compress_context(context)
+        logger.info("[%s] Context compression complete | compressed_chars=%s", request_id, len(compressed))
+        return PNB_SYSTEM_PROMPT, compressed, image
 
 
 # ---------------------------------------------------------
 # OLLAMA STREAM
 # ---------------------------------------------------------
 
-    async def _stream_ollama(self, prompt, time, file):
+    async def _stream_ollama(self, prompt, time, file, request_id):
 
-        system_prompt, context, image = await self._build_context(prompt, file)
+        system_prompt, context, image = await self._build_context(prompt, file, request_id)
 
         final_prompt = f"""
 {system_prompt}
@@ -278,6 +346,7 @@ After answering ask ONE relevant follow-up question.
 """
 
         async with httpx.AsyncClient(timeout=None) as client:
+            logger.info("[%s] Connecting to Ollama at %s", request_id, OLLAMA_URL)
 
             async with client.stream(
                 "POST",
@@ -288,11 +357,15 @@ After answering ask ONE relevant follow-up question.
                     "stream": True
                 }
             ) as response:
+                logger.info("[%s] Ollama response status: %s", request_id, response.status_code)
+                response.raise_for_status()
 
                 full_response = ""
+                chunk_count = 0
 
                 # send image once
                 if image:
+                    logger.info("[%s] Sending image metadata to frontend", request_id)
                     yield f"data: {json.dumps({'image': image})}\n\n"
 
                 async for line in response.aiter_lines():
@@ -303,6 +376,10 @@ After answering ask ONE relevant follow-up question.
                     data = json.loads(line)
 
                     if "response" in data:
+                        chunk_count += 1
+
+                        if chunk_count == 1:
+                            logger.info("[%s] Ollama first chunk received", request_id)
 
                         text = data["response"]
 
@@ -311,19 +388,21 @@ After answering ask ONE relevant follow-up question.
                         yield f"data: {json.dumps({'text': text, 'provider': 'ollama'})}\n\n"
 
                 add_memory(prompt, full_response)
+                logger.info("[%s] Ollama stream completed | chunks=%s", request_id, chunk_count)
 
 
 # ---------------------------------------------------------
 # LOCAL MODEL STREAM
 # ---------------------------------------------------------
 
-    async def _stream_local(self, app, prompt, time, file=None):
+    async def _stream_local(self, app, prompt, time, file=None, request_id="unknown"):
 
         local_model = app.state.model
         tokenizer = app.state.tokenizer
         device = getattr(app.state, "device", "cpu")
+        logger.info("[%s] Local model stream started | device=%s", request_id, device)
 
-        system_prompt, context, image = await self._build_context(prompt, file)
+        system_prompt, context, image = await self._build_context(prompt, file, request_id)
 
         system_message = f"""
 {system_prompt}
@@ -371,18 +450,25 @@ Current time: {time}
         )
 
         thread.start()
+        logger.info("[%s] Local generation thread started", request_id)
 
         full_response = ""
+        chunk_count = 0
 
         for new_text in streamer:
 
             if new_text:
+                chunk_count += 1
+
+                if chunk_count == 1:
+                    logger.info("[%s] Local model first chunk received", request_id)
 
                 full_response += new_text
 
                 yield f"data: {json.dumps({'text': new_text, 'provider': 'pnb-local'})}\n\n"
 
         add_memory(prompt, full_response)
+        logger.info("[%s] Local model stream completed | chunks=%s", request_id, chunk_count)
 
 
 # ---------------------------------------------------------
@@ -398,6 +484,7 @@ Current time: {time}
             pdf_bytes = await file.read()
 
             pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+            logger.info("Extracting PDF | bytes=%s | pages=%s", len(pdf_bytes), len(pdf_document))
 
             text = ""
 
@@ -415,6 +502,7 @@ Current time: {time}
             excel_bytes = await file.read()
 
             df = pd.read_excel(BytesIO(excel_bytes))
+            logger.info("Extracting spreadsheet | bytes=%s | rows=%s | cols=%s", len(excel_bytes), len(df), len(df.columns))
 
             schema = {
                 "columns": df.columns.tolist(),

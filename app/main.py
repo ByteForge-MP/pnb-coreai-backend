@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from app.api.controller import router as chat_router
+from app.device import get_best_device, get_model_dtype
 
 parser = argparse.ArgumentParser()
 
@@ -33,7 +34,8 @@ async def lifespan(app: FastAPI):
 
     print("Initializing PNB Core AI...")
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_best_device()
+    model_dtype = get_model_dtype(device)
     print("Device detected:", device)
 
     if USE_OLLAMA:
@@ -56,7 +58,7 @@ async def lifespan(app: FastAPI):
 
             model = AutoModelForCausalLM.from_pretrained(
                 LOCAL_MODEL_PATH,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                torch_dtype=model_dtype,
                 low_cpu_mem_usage=True,
                 local_files_only=True,
                 device_map="auto" if device == "cuda" else None
@@ -76,10 +78,13 @@ async def lifespan(app: FastAPI):
 
             model = AutoModelForCausalLM.from_pretrained(
                 HF_MODEL_NAME,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                torch_dtype=model_dtype,
                 low_cpu_mem_usage=True,
                 device_map="auto" if device == "cuda" else None
             )
+
+        if device != "cuda":
+            model.to(device)
 
         # -----------------------------
         # Store in FastAPI state

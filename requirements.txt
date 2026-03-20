@@ -6,10 +6,13 @@ python-dotenv
 pyyaml
 faiss-cpu
 sentence-transformers
+transformers
 numpy
 pymupdf
 openpyxl
 python-multipart
 pandas
 requests
+httpx
+rank-bm25
 #vllm

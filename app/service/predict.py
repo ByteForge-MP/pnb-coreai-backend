@@ -1,4 +1,4 @@
-from app.ai.model_loader import tokenizer, model
+from app.ai.model_loader import DEVICE, tokenizer, model
 import torch
 
 def predict(text: str):
@@ -9,7 +9,7 @@ def predict(text: str):
         padding=True,
         truncation=True,
         max_length=512
-    )
+    ).to(DEVICE)
 
     with torch.no_grad():
         outputs = model(**inputs)

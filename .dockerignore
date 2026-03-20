@@ -1,0 +1,20 @@
+.git
+.gitignore
+.DS_Store
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+notebooks
+rag_data
+data
+
+# Local model artifacts are huge and are not needed by the current Docker CMD,
+# which starts the app in ollama mode.
+app/models
