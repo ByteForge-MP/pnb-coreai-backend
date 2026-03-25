@@ -2,10 +2,23 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-model = SentenceTransformer("BAAI/bge-small-en-v1.5",device="cuda" if faiss.get_num_gpus() > 0 else "cpu")
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+_model = None
 
 CHUNK_SIZE = 120
 OVERLAP = 40
+
+
+def _get_model():
+    global _model
+
+    if _model is None:
+        _model = SentenceTransformer(
+            EMBEDDING_MODEL_NAME,
+            device="cuda" if faiss.get_num_gpus() > 0 else "cpu",
+        )
+
+    return _model
 
 
 def chunk_text(text):
@@ -30,6 +43,8 @@ def chunk_text(text):
 
 
 def build_dynamic_embeddings(docs):
+    if not docs:
+        return None, []
 
     chunks = []
 
@@ -40,6 +55,8 @@ def build_dynamic_embeddings(docs):
         for p in parts:
 
             chunks.append(p)
+
+    model = _get_model()
 
     embeddings = model.encode(
         chunks,

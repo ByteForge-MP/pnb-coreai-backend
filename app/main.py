@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--ollama",
     type=str,
-    default="false",
+    default=os.getenv("OLLAMA_MODE", "false"),
     help="Run backend in ollama mode (true/false)"
 )
 
@@ -142,5 +142,5 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=os.getenv("UVICORN_RELOAD", "false").lower() == "true"
     )

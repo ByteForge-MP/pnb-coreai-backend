@@ -1,4 +1,5 @@
 import json
+import os
 import torch
 import fitz
 import httpx
@@ -27,8 +28,11 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-# OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_URL = "http://ollama:11434/api/generate"
+DEFAULT_OLLAMA_URLS = (
+    "http://ollama:11434/api/generate",
+    "http://host.docker.internal:11434/api/generate",
+    "http://localhost:11434/api/generate",
+)
 
 
 PNB_SYSTEM_PROMPT = """
@@ -47,6 +51,28 @@ Conversation Style:
 
 
 class ChatService:
+
+    def _get_ollama_urls(self):
+        configured_url = os.getenv("OLLAMA_URL", "").strip()
+        candidates = []
+
+        if configured_url:
+            candidates.append(configured_url)
+
+        candidates.extend(DEFAULT_OLLAMA_URLS)
+
+        normalized = []
+
+        for url in candidates:
+            final_url = url.rstrip("/")
+
+            if not final_url.endswith("/api/generate"):
+                final_url = f"{final_url}/api/generate"
+
+            if final_url not in normalized:
+                normalized.append(final_url)
+
+        return normalized
 
     def _prompt_preview(self, prompt, limit=120):
         cleaned = " ".join(prompt.split())
@@ -345,50 +371,65 @@ Answer clearly using the context.
 After answering ask ONE relevant follow-up question.
 """
 
-        async with httpx.AsyncClient(timeout=None) as client:
-            logger.info("[%s] Connecting to Ollama at %s", request_id, OLLAMA_URL)
+        errors = []
 
-            async with client.stream(
-                "POST",
-                OLLAMA_URL,
-                json={
-                    "model": "mistral",
-                    "prompt": final_prompt,
-                    "stream": True
-                }
-            ) as response:
-                logger.info("[%s] Ollama response status: %s", request_id, response.status_code)
-                response.raise_for_status()
+        timeout = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
 
-                full_response = ""
-                chunk_count = 0
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for ollama_url in self._get_ollama_urls():
+                try:
+                    logger.info("[%s] Connecting to Ollama at %s", request_id, ollama_url)
 
-                # send image once
-                if image:
-                    logger.info("[%s] Sending image metadata to frontend", request_id)
-                    yield f"data: {json.dumps({'image': image})}\n\n"
+                    async with client.stream(
+                        "POST",
+                        ollama_url,
+                        json={
+                            "model": "mistral",
+                            "prompt": final_prompt,
+                            "stream": True
+                        }
+                    ) as response:
+                        logger.info("[%s] Ollama response status: %s", request_id, response.status_code)
+                        response.raise_for_status()
 
-                async for line in response.aiter_lines():
+                        full_response = ""
+                        chunk_count = 0
 
-                    if not line:
-                        continue
+                        if image:
+                            logger.info("[%s] Sending image metadata to frontend", request_id)
+                            yield f"data: {json.dumps({'image': image})}\n\n"
 
-                    data = json.loads(line)
+                        async for line in response.aiter_lines():
 
-                    if "response" in data:
-                        chunk_count += 1
+                            if not line:
+                                continue
 
-                        if chunk_count == 1:
-                            logger.info("[%s] Ollama first chunk received", request_id)
+                            data = json.loads(line)
 
-                        text = data["response"]
+                            if "response" in data:
+                                chunk_count += 1
 
-                        full_response += text
+                                if chunk_count == 1:
+                                    logger.info("[%s] Ollama first chunk received", request_id)
 
-                        yield f"data: {json.dumps({'text': text, 'provider': 'ollama'})}\n\n"
+                                text = data["response"]
 
-                add_memory(prompt, full_response)
-                logger.info("[%s] Ollama stream completed | chunks=%s", request_id, chunk_count)
+                                full_response += text
+
+                                yield f"data: {json.dumps({'text': text, 'provider': 'ollama'})}\n\n"
+
+                        add_memory(prompt, full_response)
+                        logger.info("[%s] Ollama stream completed | chunks=%s", request_id, chunk_count)
+                        return
+
+                except (httpx.ConnectError, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
+                    logger.warning("[%s] Ollama request failed for %s: %s", request_id, ollama_url, exc)
+                    errors.append(f"{ollama_url} -> {exc}")
+
+        raise RuntimeError(
+            "Could not connect to Ollama. Set OLLAMA_URL to the reachable endpoint. "
+            f"Tried: {'; '.join(errors) if errors else 'no endpoints'}"
+        )
 
 
 # ---------------------------------------------------------

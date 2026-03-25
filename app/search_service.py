@@ -1,9 +1,39 @@
+import os
 from app.query_expander import expand_query
 import logging
 import requests
 import time
 
 logger = logging.getLogger("chat_logger")
+
+DEFAULT_SEARXNG_URLS = (
+    "http://searxng:8080/search",
+    "http://host.docker.internal:8080/search",
+    "http://localhost:8080/search",
+)
+
+
+def _get_searxng_urls():
+    configured_url = os.getenv("SEARXNG_URL", "").strip()
+    candidates = []
+
+    if configured_url:
+        candidates.append(configured_url)
+
+    candidates.extend(DEFAULT_SEARXNG_URLS)
+
+    normalized = []
+
+    for url in candidates:
+        final_url = url.rstrip("/")
+
+        if not final_url.endswith("/search"):
+            final_url = f"{final_url}/search"
+
+        if final_url not in normalized:
+            normalized.append(final_url)
+
+    return normalized
 
 
 def search_searxng(query, top_k=5, request_id="unknown"):
@@ -16,12 +46,9 @@ def search_searxng(query, top_k=5, request_id="unknown"):
     docs = []
     seen_urls = set()
     image = None
+    searxng_urls = _get_searxng_urls()
 
     for index, q in enumerate(queries, start=1):
-
-        # url = "http://localhost:8080/search"
-        url = "http://searxng:8080/search"
-
         params = {
             "q": q,
             "format": "json",
@@ -35,10 +62,18 @@ def search_searxng(query, top_k=5, request_id="unknown"):
 
         logger.info("[%s] SearxNG request %s/%s started | q=%r", request_id, index, len(queries), q)
 
-        try:
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-        except Exception as exc:
-            logger.exception("[%s] SearxNG request failed for q=%r: %s", request_id, q, exc)
+        response = None
+
+        for url in searxng_urls:
+            try:
+                logger.info("[%s] Trying SearxNG at %s", request_id, url)
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                break
+            except Exception as exc:
+                logger.warning("[%s] SearxNG request failed via %s for q=%r: %s", request_id, url, q, exc)
+
+        if response is None:
+            logger.error("[%s] All SearxNG endpoints failed for q=%r", request_id, q)
             continue
 
         logger.info(

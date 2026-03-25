@@ -1,8 +1,19 @@
 from sentence_transformers import CrossEncoder
 
-reranker = CrossEncoder("BAAI/bge-reranker-base")
+RERANKER_MODEL_NAME = "BAAI/bge-reranker-base"
+_reranker = None
+
+
+def _get_reranker():
+    global _reranker
+
+    if _reranker is None:
+        _reranker = CrossEncoder(RERANKER_MODEL_NAME)
+
+    return _reranker
 
 def rerank(query, docs, top_k=5):
+    reranker = _get_reranker()
 
     pairs = [[query, d] for d in docs]
 
