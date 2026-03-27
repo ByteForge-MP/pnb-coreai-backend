@@ -9,7 +9,6 @@ import time as time_module
 
 from io import BytesIO
 from threading import Thread
-from transformers import TextIteratorStreamer
 
 from app.ai.openai_client import get_gemini_client, get_openai_client
 from app.retriever import retrieve, embed_query
@@ -51,6 +50,20 @@ Conversation Style:
 
 
 class ChatService:
+
+    def _build_search_event(self, image=None, sources=None, search_error=None):
+        payload = {}
+
+        if image:
+            payload["image"] = image
+
+        if sources:
+            payload["sources"] = sources
+
+        if search_error:
+            payload["search_error"] = search_error
+
+        return payload
 
     def _get_ollama_urls(self):
         configured_url = os.getenv("OLLAMA_URL", "").strip()
@@ -110,31 +123,29 @@ class ChatService:
                 yield "data: [DONE]\n\n"
                 return
 
-            match model:
+            if model in {"gpt-4o", "gpt-3.5-turbo"}:
+                logger.info("[%s] Routing request to OpenAI stream", request_id)
 
-                case "gpt-4o" | "gpt-3.5-turbo":
-                    logger.info("[%s] Routing request to OpenAI stream", request_id)
+                async for chunk in self._stream_openai(prompt, model, request_id):
+                    yield chunk
 
-                    async for chunk in self._stream_openai(prompt, model, request_id):
-                        yield chunk
+            elif model == "gemini-3-flash-preview":
+                logger.info("[%s] Routing request to Gemini stream", request_id)
 
-                case "gemini-3-flash-preview":
-                    logger.info("[%s] Routing request to Gemini stream", request_id)
+                async for chunk in self._stream_gemini(prompt, model, request_id):
+                    yield chunk
 
-                    async for chunk in self._stream_gemini(prompt, model, request_id):
-                        yield chunk
+            elif model == "pnb-local-model":
+                logger.info("[%s] Routing request to local model stream", request_id)
 
-                case "pnb-local-model":
-                    logger.info("[%s] Routing request to local model stream", request_id)
+                async for chunk in self._stream_local(app, prompt, time, file, request_id):
+                    yield chunk
 
-                    async for chunk in self._stream_local(app, prompt, time, file, request_id):
-                        yield chunk
+            else:
+                logger.info("[%s] Unknown model %s, defaulting to local stream", request_id, model)
 
-                case _:
-                    logger.info("[%s] Unknown model %s, defaulting to local stream", request_id, model)
-
-                    async for chunk in self._stream_local(app, prompt, time, file, request_id):
-                        yield chunk
+                async for chunk in self._stream_local(app, prompt, time, file, request_id):
+                    yield chunk
 
         except Exception as e:
 
@@ -156,9 +167,15 @@ class ChatService:
 
     async def _stream_openai(self, prompt, model, request_id):
 
-        system_prompt, context, image = await self._build_context(prompt, None, request_id)
+        system_prompt, context, image, sources, search_error = await self._build_context(prompt, None, request_id)
         openai_client = get_openai_client()
         logger.info("[%s] OpenAI request started | model=%s", request_id, model)
+
+        search_event = self._build_search_event(image=image, sources=sources, search_error=search_error)
+
+        if search_event:
+            logger.info("[%s] Sending search metadata to frontend", request_id)
+            yield f"data: {json.dumps(search_event)}\n\n"
 
         stream = await openai_client.chat.completions.create(
             model=model,
@@ -196,9 +213,15 @@ class ChatService:
 
     async def _stream_gemini(self, prompt, model, request_id):
 
-        system_prompt, context, image = await self._build_context(prompt, None, request_id)
+        system_prompt, context, image, sources, search_error = await self._build_context(prompt, None, request_id)
         gemini_client = get_gemini_client()
         logger.info("[%s] Gemini request started | model=%s", request_id, model)
+
+        search_event = self._build_search_event(image=image, sources=sources, search_error=search_error)
+
+        if search_event:
+            logger.info("[%s] Sending search metadata to frontend", request_id)
+            yield f"data: {json.dumps(search_event)}\n\n"
 
         stream = await gemini_client.chat.completions.create(
             model=model,
@@ -264,15 +287,17 @@ Answer ONLY using the document content.
                 len(file_content),
                 len(compressed),
             )
-            return system_prompt, compressed, None
+            return system_prompt, compressed, None, [], None
 
 
-        route = route_query(prompt)
-        logger.info("[%s] Query routed to %s", request_id, route)
+        route = route_query(file)
+        logger.info("[%s] Query routed to %s | has_file=%s", request_id, route, file is not None)
 
         static_chunks = []
         web_chunks = []
         image = None
+        sources = []
+        search_error = None
 
 
         # -------------------------
@@ -294,11 +319,22 @@ Answer ONLY using the document content.
         else:
 
             search_docs = search_searxng(prompt, request_id=request_id)
-            logger.info("[%s] Web search returned %s documents", request_id, len(search_docs) if search_docs else 0)
+            summary_text = search_docs.get("summary", "") if search_docs else ""
+            image = search_docs.get("image") if search_docs else None
+            sources = search_docs.get("sources", []) if search_docs else []
+            search_error = search_docs.get("error") if search_docs else None
+            logger.info(
+                "[%s] Web search returned summary_chars=%s | has_image=%s | sources=%s | error=%s",
+                request_id,
+                len(summary_text),
+                image is not None,
+                len(sources),
+                search_error,
+            )
 
-            if search_docs:
+            if summary_text:
 
-                dynamic_index, dynamic_chunks = build_dynamic_embeddings(search_docs)
+                dynamic_index, dynamic_chunks = build_dynamic_embeddings([summary_text])
 
                 query_embedding = embed_query(prompt)
 
@@ -325,8 +361,12 @@ Answer ONLY using the document content.
 
         if not all_docs:
             logger.warning("[%s] No knowledge retrieved for prompt", request_id)
+            fallback_context = "No knowledge retrieved."
 
-            return PNB_SYSTEM_PROMPT, "No knowledge retrieved.", image
+            if search_error:
+                fallback_context = f"Web search failed: {search_error}."
+
+            return PNB_SYSTEM_PROMPT, fallback_context, image, sources, search_error
 
 
         best_docs = rerank(prompt, all_docs, top_k=5)
@@ -346,7 +386,7 @@ Retrieved Knowledge:
 
         compressed = compress_context(context)
         logger.info("[%s] Context compression complete | compressed_chars=%s", request_id, len(compressed))
-        return PNB_SYSTEM_PROMPT, compressed, image
+        return PNB_SYSTEM_PROMPT, compressed, image, sources, search_error
 
 
 # ---------------------------------------------------------
@@ -355,7 +395,7 @@ Retrieved Knowledge:
 
     async def _stream_ollama(self, prompt, time, file, request_id):
 
-        system_prompt, context, image = await self._build_context(prompt, file, request_id)
+        system_prompt, context, image, sources, search_error = await self._build_context(prompt, file, request_id)
 
         final_prompt = f"""
 {system_prompt}
@@ -395,9 +435,11 @@ After answering ask ONE relevant follow-up question.
                         full_response = ""
                         chunk_count = 0
 
-                        if image:
-                            logger.info("[%s] Sending image metadata to frontend", request_id)
-                            yield f"data: {json.dumps({'image': image})}\n\n"
+                        search_event = self._build_search_event(image=image, sources=sources, search_error=search_error)
+
+                        if search_event:
+                            logger.info("[%s] Sending search metadata to frontend", request_id)
+                            yield f"data: {json.dumps(search_event)}\n\n"
 
                         async for line in response.aiter_lines():
 
@@ -437,13 +479,14 @@ After answering ask ONE relevant follow-up question.
 # ---------------------------------------------------------
 
     async def _stream_local(self, app, prompt, time, file=None, request_id="unknown"):
+        from transformers import TextIteratorStreamer
 
         local_model = app.state.model
         tokenizer = app.state.tokenizer
         device = getattr(app.state, "device", "cpu")
         logger.info("[%s] Local model stream started | device=%s", request_id, device)
 
-        system_prompt, context, image = await self._build_context(prompt, file, request_id)
+        system_prompt, context, image, sources, search_error = await self._build_context(prompt, file, request_id)
 
         system_message = f"""
 {system_prompt}
@@ -495,6 +538,12 @@ Current time: {time}
 
         full_response = ""
         chunk_count = 0
+
+        search_event = self._build_search_event(image=image, sources=sources, search_error=search_error)
+
+        if search_event:
+            logger.info("[%s] Sending search metadata to frontend", request_id)
+            yield f"data: {json.dumps(search_event)}\n\n"
 
         for new_text in streamer:
 

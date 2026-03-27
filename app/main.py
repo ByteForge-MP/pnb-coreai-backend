@@ -5,7 +5,6 @@ import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from app.api.controller import router as chat_router
 from app.device import get_best_device, get_model_dtype
@@ -46,6 +45,7 @@ async def lifespan(app: FastAPI):
         return
 
     try:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
         if os.path.exists(LOCAL_MODEL_PATH):
 

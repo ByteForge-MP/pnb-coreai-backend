@@ -1,7 +1,6 @@
 
-def route_query(file: any):
-
+def route_query(file=None):
     if file:
         return "kb"
-    else:
-        return "web"
+
+    return "web"

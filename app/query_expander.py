@@ -1,8 +1,16 @@
 def expand_query(query):
-
-    queries = [
-        f"{query} recent news",
+    candidates = [
+        query,
         f"{query} details",
+        f"{query} recent news",
     ]
 
-    return queries
+    normalized = []
+
+    for item in candidates:
+        value = item.strip()
+
+        if value and value not in normalized:
+            normalized.append(value)
+
+    return normalized
