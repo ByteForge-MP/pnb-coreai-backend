@@ -8,6 +8,7 @@ import faiss
 import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
+from app.device import get_best_device
 
 logger = logging.getLogger("chat_logger")
 
@@ -24,11 +25,28 @@ _abbreviations = None
 _bm25 = None
 
 
+def _is_offline_mode():
+    return os.getenv("OFFLINE_MODE", "false").lower() == "true"
+
+
+def _get_embedding_device():
+    device = get_best_device()
+
+    if device == "mps":
+        return "cpu"
+
+    return device
+
+
 def _load_model():
     global _model
 
     if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        _model = SentenceTransformer(
+            EMBEDDING_MODEL_NAME,
+            device=_get_embedding_device(),
+            local_files_only=_is_offline_mode(),
+        )
 
     return _model
 
@@ -81,10 +99,14 @@ def tokenize(text):
 
 
 def embed_query(query):
-    model = _load_model()
-    q_emb = model.encode([query], convert_to_numpy=True).astype("float32")
-    faiss.normalize_L2(q_emb)
-    return q_emb
+    try:
+        model = _load_model()
+        q_emb = model.encode([query], convert_to_numpy=True).astype("float32")
+        faiss.normalize_L2(q_emb)
+        return q_emb
+    except Exception as exc:
+        logger.warning("Query embedding unavailable: %s", exc)
+        return None
 
 
 def expand_query(query):
@@ -110,7 +132,12 @@ def retrieve(query, k=3):
     if index is None or not chunks or bm25 is None:
         return []
 
-    model = _load_model()
+    try:
+        model = _load_model()
+    except Exception as exc:
+        logger.warning("Retriever embedding model unavailable: %s", exc)
+        return []
+
     expanded_query = expand_query(query)
     vector = model.encode([expanded_query], normalize_embeddings=True)
     distances, indices = index.search(np.array(vector), 10)

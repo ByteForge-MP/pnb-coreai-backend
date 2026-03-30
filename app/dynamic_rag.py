@@ -1,6 +1,8 @@
 import faiss
 import numpy as np
+import os
 from sentence_transformers import SentenceTransformer
+from app.device import get_best_device
 
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 _model = None
@@ -9,13 +11,27 @@ CHUNK_SIZE = 120
 OVERLAP = 40
 
 
+def _is_offline_mode():
+    return os.getenv("OFFLINE_MODE", "false").lower() == "true"
+
+
+def _get_embedding_device():
+    device = get_best_device()
+
+    if device == "mps":
+        return "cpu"
+
+    return device
+
+
 def _get_model():
     global _model
 
     if _model is None:
         _model = SentenceTransformer(
             EMBEDDING_MODEL_NAME,
-            device="cuda" if faiss.get_num_gpus() > 0 else "cpu",
+            device=_get_embedding_device(),
+            local_files_only=_is_offline_mode(),
         )
 
     return _model

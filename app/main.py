@@ -21,6 +21,12 @@ parser.add_argument(
 args, _ = parser.parse_known_args()
 
 USE_OLLAMA = args.ollama.lower() == "true"
+OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() == "true"
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if origin.strip()
+]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 raw_path = os.path.join(BASE_DIR, "models", "smollm2-1.7b-local")
@@ -69,6 +75,11 @@ async def lifespan(app: FastAPI):
         # -----------------------------
 
         else:
+            if OFFLINE_MODE:
+                raise RuntimeError(
+                    "OFFLINE_MODE=true and local model not found. "
+                    "Start with --ollama true or download the model first."
+                )
 
             print("Local model not found. Downloading from HuggingFace...")
 
@@ -119,7 +130,7 @@ app.state.use_ollama = USE_OLLAMA
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

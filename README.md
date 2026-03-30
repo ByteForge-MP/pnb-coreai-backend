@@ -46,7 +46,11 @@ pkill ollama <br>
 #### Docker <br>
 docker run -d -p 8080:8080 --name searxng searxng/searxng <br>
 
-
+#### Auth / Frontend <br>
+Default users: `admin/admin123`, `mayank/mayank123`, `john/john123` <br>
+Optional multi-user env JSON: <br>
+export AUTH_USERS='{"admin":{"password":"admin123","name":"Admin User"},"mayank":{"password":"mayank123","name":"Mayank Prakash"},"john":{"password":"john123","name":"John Doe"}}' <br>
+export CORS_ORIGINS="http://localhost:5173,http://127.0.0.1:5173" <br>
 
 
 

@@ -12,6 +12,10 @@ DEFAULT_SEARXNG_URLS = (
 )
 
 
+def _is_offline_mode():
+    return os.getenv("OFFLINE_MODE", "false").lower() == "true"
+
+
 def _truncate(value, limit=500):
     text = str(value or "").strip()
 
@@ -61,10 +65,21 @@ def search_searxng(query, top_k=5, request_id="unknown"):
     started_at = time.monotonic()
     logger.info("[%s] SearxNG search started | query=%r | top_k=%s", request_id, query, top_k)
 
+    if _is_offline_mode():
+        logger.info("[%s] SearxNG skipped because OFFLINE_MODE=true", request_id)
+        return {
+            "summary": "",
+            "documents": [],
+            "image": None,
+            "sources": [],
+            "error": "Web search disabled in offline mode.",
+        }
+
     queries = expand_query(query)
     logger.info("[%s] Expanded into %s query variants", request_id, len(queries))
 
     docs = []
+    source_docs = []
     seen_urls = set()
     sources = []
     image = None
@@ -183,6 +198,11 @@ def search_searxng(query, top_k=5, request_id="unknown"):
 
             if answer_text:
                 docs.append(answer_text)
+                source_docs.append({
+                    "text": answer_text,
+                    "kind": "answer",
+                    "query": q,
+                })
 
         for infobox in infoboxes:
             infobox_parts = []
@@ -206,7 +226,13 @@ def search_searxng(query, top_k=5, request_id="unknown"):
                         infobox_parts.append(f"{key}: {value}")
 
             if infobox_parts:
-                docs.append(". ".join(infobox_parts))
+                infobox_text = ". ".join(infobox_parts)
+                docs.append(infobox_text)
+                source_docs.append({
+                    "text": infobox_text,
+                    "kind": "infobox",
+                    "query": q,
+                })
 
         for r in results[:top_k]:
 
@@ -233,6 +259,15 @@ def search_searxng(query, top_k=5, request_id="unknown"):
             text = f"{title}. {snippet}"
 
             docs.append(text)
+            source_docs.append({
+                "text": text,
+                "kind": "result",
+                "query": q,
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "image": thumbnail,
+            })
 
         if docs:
             logger.info("[%s] SearxNG gathered usable docs after q=%r; skipping remaining expansions", request_id, q)
@@ -263,6 +298,7 @@ def search_searxng(query, top_k=5, request_id="unknown"):
 
     return {
         "summary": summary,
+        "documents": source_docs,
         "image": image,
         "sources": sources,
         "error": search_error,
